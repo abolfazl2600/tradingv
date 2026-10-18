@@ -1,11 +1,11 @@
 //@version=6
 //@strategy_alert_message {{strategy.order.alert_message}}
 
-// BTC Futures Bot v1.8 — Pine Script v6
+// BTC Futures Bot v1.9 — Pine Script v6
 // Standalone TradingView research strategy. No broker API or live order placement.
 // IMPORTANT: use a standard 5m chart for 5m exits; entry indicators remain 15m.
 // Linear USD/USDT-quoted contracts only. Never backtest 5m exits on a 15m chart.
-strategy("BTC Futures Bot | FA | v1.8",
+strategy("BTC Futures Bot | FA | v1.9",
      overlay = true,
      initial_capital = 100,
      currency = currency.USD,
@@ -172,7 +172,24 @@ useInside48 = input.bool(true, "فعال‌سازی شرط محدوده ۲۴ د�
 // High and low for the preceding 48h are calculated on 15m bars [96..287].
 
 // ─────────────────────────────────────────────────────────────────────
-// 10. 5m strategy execution with confirmed 15m entry signals
+// 10. Toggleable 3h / 6h support-and-resistance rejection entry model
+// ─────────────────────────────────────────────────────────────────────
+// This alternative signal replaces EMA / Donchian ONLY when enabled.
+// It must still pass confirmed monthly+weekly alignment and any enabled
+// risk/volume/range gates. Each window EXCLUDES the signal candle itself.
+gLevel = "۱۰. استراتژی ورود از سقف/کف ۳ و ۶ ساعت"
+useLevelEntry = input.bool(false, "فعال‌سازی استراتژی ورود از سطوح ۳/۶ ساعت",
+     tooltip = "روشن: لانگ در برگشت از کف و شورت در برگشت از سقف ۳ یا ۶ ساعت، با تأیید ماهانه و هفتگی. خاموش: مدل قبلی EMA/Donchian اجرا می‌شود.",
+     group = gLevel)
+use3hEntry = input.bool(true, "اجازه سیگنال از سطوح ۳ ساعت", group = gLevel)
+use6hEntry = input.bool(true, "اجازه سیگنال از سطوح ۶ ساعت", group = gLevel)
+levelClosePct = input.float(0.15, "حداکثر فاصله کلوز از سطح (%)",
+     minval = 0.01, maxval = 5.0, step = 0.05,
+     tooltip = "پس از برخورد کندل ۱۵دقیقه‌ای به سطح، قیمت بسته‌شدن باید در این فاصله و در سمت برگشت سطح باشد.",
+     group = gLevel)
+
+// ─────────────────────────────────────────────────────────────────────
+// 11. 5m strategy execution with confirmed 15m entry signals
 // ─────────────────────────────────────────────────────────────────────
 // IMPORTANT: the chart is 5m. Only its last candle in each 15m interval
 // can place an entry. lookahead_off returns the completed 15m series on
@@ -193,7 +210,9 @@ f_signals15() =>
      breakLong15, breakShort15, volume, ta.sma(volume, spikeLen)[1],
      close, ta.highest(high, 96), ta.lowest(low, 96),
      ta.highest(high[96], 192), ta.lowest(low[96], 192),
-     time, time[95], time[287]]
+     ta.highest(high, 12)[1], ta.lowest(low, 12)[1],
+     ta.highest(high, 24)[1], ta.lowest(low, 24)[1],
+     high, low, time, time[12], time[24], time[95], time[287]]
 
 f_rvol15() =>
     float histSum = 0.0
@@ -212,7 +231,8 @@ f_rvol15() =>
 // 5m indicators when optimizing against the previous strategy.
 [emaFast, emaSlow, rsiValue, emaLong, emaShort, breakLong, breakShort,
  volume15, avgVolume, close15, high24h, low24h,
- highPrior48, lowPrior48, time15, time95, time287] = request.security(
+ highPrior48, lowPrior48, high3h, low3h, high6h, low6h,
+ high15, low15, time15, time12, time24, time95, time287] = request.security(
      syminfo.tickerid, "15", f_signals15(), lookahead = barmerge.lookahead_off)
 [histVolumeSum, histVolumeCount] = request.security(
      syminfo.tickerid, "15", f_rvol15(), lookahead = barmerge.lookahead_off)
@@ -248,24 +268,54 @@ bool insideReady = rangeReady and not na(time287) and
 bool inside48 = insideReady and high24h <= highPrior48 and low24h >= lowPrior48
 bool insideEntryOK = not useInside48 or inside48
 
+// Historical level calculations exclude the forming 15m signal bar.
+// A confirmed signal must WICK-TOUCH the previous level and CLOSE
+// back inside it within the user-defined tolerance. No future bars.
+bool level3Ready = not na(time12) and time15 - time12 == 12 * 15 * 60 * 1000 and
+     not na(high3h) and not na(low3h) and high3h > 0 and low3h > 0
+bool level6Ready = not na(time24) and time15 - time24 == 24 * 15 * 60 * 1000 and
+     not na(high6h) and not na(low6h) and high6h > 0 and low6h > 0
+bool long3h = level3Ready and low15 <= low3h and close15 > low3h and
+     100 * (close15 - low3h) / low3h <= levelClosePct
+bool long6h = level6Ready and low15 <= low6h and close15 > low6h and
+     100 * (close15 - low6h) / low6h <= levelClosePct
+bool short3h = level3Ready and high15 >= high3h and close15 < high3h and
+     100 * (high3h - close15) / high3h <= levelClosePct
+bool short6h = level6Ready and high15 >= high6h and close15 < high6h and
+     100 * (high6h - close15) / high6h <= levelClosePct
+bool levelLongSignal = (use3hEntry and long3h) or (use6hEntry and long6h)
+bool levelShortSignal = (use3hEntry and short3h) or (use6hEntry and short6h)
+
 // Store levels only once the 15m signal bar has closed, preventing
 // unstable range lines on the first two 5m bars of an open 15m candle.
 var float lineHigh24 = na
 var float lineLow24 = na
 var float lineHigh48 = na
 var float lineLow48 = na
+var float lineHigh3h = na
+var float lineLow3h = na
+var float lineHigh6h = na
+var float lineLow6h = na
 if is15mClose
     lineHigh24 := rangeReady ? high24h : na
     lineLow24 := rangeReady ? low24h : na
     lineHigh48 := insideReady ? highPrior48 : na
     lineLow48 := insideReady ? lowPrior48 : na
+    lineHigh3h := level3Ready ? high3h : na
+    lineLow3h := level3Ready ? low3h : na
+    lineHigh6h := level6Ready ? high6h : na
+    lineLow6h := level6Ready ? low6h : na
 
 bool useEma = model == "تقاطع EMA"
-bool rawLong = useEma ? emaLong : breakLong
-bool rawShort = useEma ? emaShort : breakShort
+bool rawLong = useLevelEntry ? levelLongSignal : (useEma ? emaLong : breakLong)
+bool rawShort = useLevelEntry ? levelShortSignal : (useEma ? emaShort : breakShort)
+// RSI validates the old EMA/Donchian models; it is not a prerequisite
+// for the new range-rejection model (monthly+weekly remain mandatory).
+bool rsiLongOK = useLevelEntry or rsiValue >= rsiLongMin
+bool rsiShortOK = useLevelEntry or rsiValue <= rsiShortMax
 
 // ─────────────────────────────────────────────────────────────────────
-// 11. Symbol guard, sizing, and entry only after 15m close
+// 12. Symbol guard, sizing, and entry only after 15m close
 // ─────────────────────────────────────────────────────────────────────
 validQuote = syminfo.currency == "USD" or syminfo.currency == "USDT"
 float quoteEquity = nz(strategy.convert_to_symbol(math.max(strategy.equity, 0)),
@@ -282,10 +332,10 @@ canEnter = is15mClose and validQuote and
      strategy.position_size == 0 and strategy.equity > 0
 volumeOK = spikeOK and rvolOK
 enterLong = canEnter and rangeEntryOK and insideEntryOK and longAllowed and rawLong and
-     rsiValue >= rsiLongMin and volumeOK and deltaLongOK and
+     rsiLongOK and volumeOK and deltaLongOK and
      not na(longQty) and longQty >= qtyStep
 enterShort = canEnter and rangeEntryOK and insideEntryOK and shortAllowed and rawShort and
-     rsiValue <= rsiShortMax and volumeOK and deltaShortOK and
+     rsiShortOK and volumeOK and deltaShortOK and
      not na(shortQty) and shortQty >= qtyStep
 
 // TradingView profit/loss in ticks are anchored to the simulated fill price.
@@ -297,12 +347,12 @@ int slTicks = math.max(1,
      int(math.round(close * slPct / 100.0 / syminfo.mintick)))
 
 // ─────────────────────────────────────────────────────────────────────
-// 12. Entry orders and protective OCA exits
+// 13. Entry orders and protective OCA exits
 // ─────────────────────────────────────────────────────────────────────
 var string activeTradeId = ""
 var string tpAlert = ""
 var string slAlert = ""
-string baseJSON = '"schema":"btc-futures-v1","version":"1.8","symbol":"' +
+string baseJSON = '"schema":"btc-futures-v1","version":"1.9","symbol":"' +
      syminfo.tickerid + '","timeframe":"' + timeframe.period + '"'
 
 if enterLong
@@ -340,7 +390,7 @@ if enterShort
          alert_profit = tpAlert, alert_loss = slAlert)
 
 // ─────────────────────────────────────────────────────────────────────
-// 13. Position management:
+// 14. Position management:
 // (a) trend no longer aligned -> close;
 // (b) optional opposite *confirmed* 5m candle AND positive open profit -> close;
 // (c) otherwise maintain exact TP/SL based on entry average.
@@ -395,15 +445,25 @@ if strategy.position_size < 0
              alert_profit = tpAlert, alert_loss = slAlert)
 
 // ─────────────────────────────────────────────────────────────────────
-// 14. Chart display and small Persian dashboard
+// 15. Chart display and small Persian dashboard
 // ─────────────────────────────────────────────────────────────────────
-gView = "۱۰. نمایش"
+gView = "۱۱. نمایش"
 showDash = input.bool(true, "نمایش داشبورد", group = gView)
+show3hLines = input.bool(true, "نمایش خطوط سقف/کف ۳ ساعت", group = gView)
+show6hLines = input.bool(true, "نمایش خطوط سقف/کف ۶ ساعت", group = gView)
 show24hLines = input.bool(true, "نمایش خطوط سقف/کف ۲۴ ساعت", group = gView)
 show48hLines = input.bool(true, "نمایش خطوط سقف/کف ۴۸ ساعت قبلی", group = gView)
 plot(emaFast, "EMA سریع", color = color.teal)
 plot(emaSlow, "EMA کند", color = color.orange)
-// Four independent, stair-stepped bounds on confirmed 15m updates.
+// Eight separate historical levels updated only on completed M15 bars.
+plot(show3hLines and is5m ? lineHigh3h : na, "سقف ۳ ساعت",
+     color = color.fuchsia, linewidth = 2, style = plot.style_stepline)
+plot(show3hLines and is5m ? lineLow3h : na, "کف ۳ ساعت",
+     color = color.fuchsia, linewidth = 2, style = plot.style_stepline)
+plot(show6hLines and is5m ? lineHigh6h : na, "سقف ۶ ساعت",
+     color = color.blue, linewidth = 2, style = plot.style_stepline)
+plot(show6hLines and is5m ? lineLow6h : na, "کف ۶ ساعت",
+     color = color.blue, linewidth = 2, style = plot.style_stepline)
 plot(show24hLines and is5m ? lineHigh24 : na, "سقف ۲۴ ساعت",
      color = color.aqua, linewidth = 2, style = plot.style_stepline)
 plot(show24hLines and is5m ? lineLow24 : na, "کف ۲۴ ساعت",
@@ -419,7 +479,7 @@ plotshape(enterLong, title = "سیگنال لانگ", style = shape.triangleup,
 plotshape(enterShort, title = "سیگنال شورت", style = shape.triangledown,
      location = location.abovebar, color = color.red, size = size.small)
 
-var table dash = table.new(position.top_right, 2, 10, border_width = 1)
+var table dash = table.new(position.top_right, 2, 11, border_width = 1)
 string mText = monthlyBull ? "صعودی" : monthlyBear ? "نزولی" : "خنثی"
 string wText = weeklyBull ? "صعودی" : weeklyBear ? "نزولی" : "خنثی"
 string modeText = not is5m ? "چارت ۵ دقیقه لازم" :
@@ -439,6 +499,12 @@ string rangeText = not use24hRange ? "خاموش" :
 string insideText = not useInside48 ? "خاموش" :
      not insideReady ? "داده ناکافی" :
      inside48 ? "محدوده داخلی" : "خارج از ۴۸ ساعت"
+string levelText = not useLevelEntry ? "خاموش" :
+     not use3hEntry and not use6hEntry ? "انتخاب سطح لازم" :
+     levelLongSignal ? "سیگنال کف" :
+     levelShortSignal ? "سیگنال سقف" :
+     ((use3hEntry and not level3Ready) or (use6hEntry and not level6Ready)) ? "داده ناکافی" :
+     "انتظار برخورد"
 string positionText = strategy.position_size > 0 ? "لانگ" :
      strategy.position_size < 0 ? "شورت" : "بدون پوزیشن"
 
@@ -469,5 +535,10 @@ if barstate.islast
         table.cell(dash, 1, 9, insideText,
              bgcolor = not useInside48 ? color.gray : insideEntryOK ? color.green : color.red,
              text_color = color.white)
+        table.cell(dash, 0, 10, "ورود سطوح ۳/۶", bgcolor = color.black, text_color = color.white)
+        table.cell(dash, 1, 10, levelText,
+             bgcolor = not useLevelEntry ? color.gray :
+             levelLongSignal ? color.green : levelShortSignal ? color.red : color.gray,
+             text_color = color.white)
     else
-        table.clear(dash, 0, 0, 1, 9)
+        table.clear(dash, 0, 0, 1, 10)

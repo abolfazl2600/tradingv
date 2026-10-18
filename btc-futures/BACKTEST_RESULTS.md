@@ -2,7 +2,7 @@
 
 ثبت آزمایش‌های TradingView برای مقایسه کانفیگ‌ها. نتیجه‌ها فقط از بک‌تست یا شواهد واقعی کاربر ثبت می‌شوند؛ مقدارهای نامعلوم با «تأیید نشده» مشخص می‌شوند.
 
-## Baseline — strategy.pine v1.8
+## Baseline — strategy.pine v1.9
 
 | Setting | Default |
 | --- | --- |
@@ -18,7 +18,10 @@
 | Profitable opposite 5m candle exit | Enabled; opposite 5m close AND strategy.openprofit > 0 (gross unrealized PnL) |
 | 24h high/low proximity block | Enabled; no new entry when confirmed 15m close is within 1.0% of either rolling 24h extreme (96 confirmed bars, including signal bar) |
 | 24h inside preceding 48h entry gate | Enabled. Last 96 confirmed M15 highs/lows must fit within **the preceding** 192 M15 bars' extremes. Requires continuous 72h history. Disabled gate permits entries without this check. |
-| Chart range lines | Show 24h High/Low (aqua) and previous non-overlapping 48h High/Low (yellow); separately toggled, default ON |
+| Chart range lines | Show 3h High/Low (fuchsia), 6h High/Low (blue), 24h High/Low (aqua) and previous non-overlapping 48h High/Low (yellow); each pair separately toggled, default ON |
+| New 3h/6h level rejection strategy | OFF by default. When ON it replaces EMA/Donchian signals; 3h and 6h entry sources each enabled by default and can be disabled. Strict monthly+weekly direction still required. |
+| 3h/6h proximity threshold | 0.15% default from touched historical level to the confirmed 15m close; Long touch low and close back above, Short touch high and close below. |
+| Historical level windows | 3h: previous 12 M15 candles [1..12]; 6h: previous 24 [1..24]; exclude signal candle and fail closed when data incomplete. |
 | Volume Spike | Enabled; at most 3 × SMA(volume, 20)[1] |
 | RVOL | Enabled; minimum 0.8; 14 prior same-time daily slots |
 | Estimated Delta | Enabled; minimum 10 one-minute candles; 80% volume coverage |
@@ -36,7 +39,7 @@
 | BT-002 | v1.7 | Binance BTCUSDT perpetual (TradingView display BTCUSDT.P; exact ticker to confirm) | Not shown in screenshot | 5m chart; 50% allocation; 1x/1x; TP 0.5%, SL 0.5%; monthly EMA 1/2 and weekly EMA 4/10 shown in open Inputs (application unverified); opposite 5m profitable exit checked | 0 (as displayed) | N/A | N/A | N/A | N/A | N/A | No trades; monthly regime shown neutral, weekly bullish. Details below |
 | BT-003 | v1.7 | Binance BTCUSDT (chart says Bitcoin/TetherUS; likely spot; verify) | Sep 28, 2026 – Oct 18, 2026 (date selector, timezone unverified) | Donchian M15; chart 5m; allocation 50%; leverage L/S 1x/1x; TP/SL 1%/1%; monthly EMA 3/6, weekly EMA 4/10; opposite profitable 5m exit ON; Spike ON (15,3x); RVOL ON (14 days, >=0.8); Delta OFF; 24h high/low ON (0.4%) | 18 | 94.44 (17/18) | +1.22 | 2.293 | 1.08 | Expectancy +0.04 USD (+0.07%) shown on Distribution | New screenshots 2026-10-18: Net PnL +1.22 USD, Gross Profit 2.17 USD, Gross Loss 0.94 USD, Buy & Hold -2.43%, 0 margin calls; see details below |
 | BT-004 | v1.7 | Binance BTCUSDT (chart Bitcoin/TetherUS, likely spot; exact ticker unverified) | Sep 28, 2026 – Oct 18, 2026 (selector timezone unverified) | Donchian M15, 5m chart; 50% allocation; L/S 1x; TP 2%, SL 1%; opposite-profitable-5m exit OFF; monthly EMA 3/6; weekly EMA 4/10; signal EMA 2/5, RSI 9 (Long min 8, Short max 4), Donchian 17; Spike ON (24, 2x); RVOL ON (14 days, >=0.8); Delta OFF; 24h range ON 0.4% | 6 | 50.00 (3/6) | +1.25 shown in Key stats | 1.674 | 1.53 | Expectancy +0.19 USD / 0.40% as displayed | Gross profit 2.83 USD, gross loss 1.69 USD; all six closed trades LONG; possible open PnL/report timing difference; see details below |
-| — | v1.8 | — | — | Baseline v1.8, 24h-within-preceding-48h ON, 24h/48h lines ON; actual user test not yet received | — | — | — | — | — | — | Not yet tested |
+| — | v1.9 | — | — | Baseline v1.9, new 3h/6h lines ON, range-rejection strategy OFF; historical user results BT-001–BT-004 unchanged | — | — | — | — | — | — | Not yet tested |
 
 ## BT-001 — Screenshot-derived details (2026-10-18)
 
@@ -85,6 +88,15 @@
 - **Logic cases:** (1) High24 100, Low24 90; HighPrev48 110, LowPrev48 80 => allowed. (2) High24 115 => blocked. (3) Low24 75 => blocked. (4) either boundary equal => allowed. (5) missing or gapped 72h history => blocked if enabled, bypassed if disabled.
 - **Isolation test:** Compare v1.8 gate ON/OFF on the same symbol, 5m chart, period, other inputs, commission, slippage and margin. Disabling the *separate* near-24h-extreme filter for this controlled test helps distinguish which gate suppressed a potential entry.
 - **No results claim:** Pine compilation and Strategy Tester results remain unverified until the user tests them. Existing BT-001 through BT-004 remain historical and must not be re-labelled as v1.8.
+
+## v1.9 level-entry validation plan — no results claimed
+
+- **New source windows:** 3h = 12 confirmed M15 bars [1..12]; 6h = 24 confirmed M15 bars [1..24]. The signal candle [0] is not part of these levels, preventing automatic inclusion of its own new high/low.
+- **Entry scenarios:** (1) prior 3h low = 80,000, signal 15m low = 79,990, close = 80,050 => touches and closes 0.0625% above → eligible Long if monthly+weekly bullish; (2) prior 6h high = 82,000, signal high = 82,010, close = 81,930 => touches and closes 0.0854% below → eligible Short if monthly+weekly bearish. Both still require all enabled independent gates, sufficient qty and correct 5m chart.
+- **Invalid cases:** a touch without a close back inside the previous level, close farther away than 0.15%, inconsistent monthly/weekly trend, missing 15m bars, or both 3h/6h source switches disabled → no level-model signal.
+- **A/B tests:** Compare identical symbol, historical period, leverage, commission, slippage and unrelated filters with `useLevelEntry=OFF` vs `ON`. Within ON, compare sources 3h-only / 6h-only / both, and proximity thresholds 0.05% / 0.15% / 0.25%, one dimension at a time.
+- **Risk of overlap:** The independent 24h-extreme avoidance gate and 24-in-prior-48 gate can block a valid 3h/6h level signal; document the state of each toggle in every experiment.
+- **Status:** Pine compilation in the TradingView editor and Strategy Tester results for v1.9 are NOT yet verified. Existing BT-001–BT-004 remain historical and must not be labelled as v1.9.
 
 ## Reporting format
 
