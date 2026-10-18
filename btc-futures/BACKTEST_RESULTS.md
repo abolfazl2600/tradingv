@@ -31,6 +31,7 @@
 | Run ID | Code version | Symbol/exchange | Backtest period | Config changes | Trades | Win rate % | Net profit % | Profit factor | Max drawdown % | Avg trade | Evidence / Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
 | BT-001 | v1.5 | Binance BTC/USDT perpetual (exact ticker unverified) | 2026-08-01 to 2026-10-18 (date selector; timezone unverified) | 15m EMA cross; equity 95%; L 3x / S 1x; TP 1.0%, SL 1.0%; opposite-candle exit ON; monthly EMA 6/12, weekly EMA 10/30; **no 24h filter in v1.5** | 21 | 33.33 | +0.43 | 1.381 | 0.89 | Not reported | User screenshot (2026-10-18); partial config; see details below |
+| BT-002 | v1.7 | Binance BTCUSDT perpetual (TradingView display BTCUSDT.P; exact ticker to confirm) | Not shown in screenshot | 5m chart; 50% allocation; 1x/1x; TP 0.5%, SL 0.5%; monthly EMA 1/2 and weekly EMA 4/10 shown in open Inputs (application unverified); opposite 5m profitable exit checked | 0 (as displayed) | N/A | N/A | N/A | N/A | N/A | No trades; monthly regime shown neutral, weekly bullish. Details below |
 | — | v1.7 | — | — | Baseline, execution 5m / entry M15, 1x/1x, profitable 5m reverse-candle exit ON | — | — | — | — | — | — | Not yet tested |
 
 ## BT-001 — Screenshot-derived details (2026-10-18)
@@ -42,6 +43,15 @@
 - **Observed outputs:** initial capital 100 USD; net PnL +0.43 USD (+0.43%); gross profit +1.57 USD; gross loss 1.14 USD; 7 winning / 21 total closed trades (33.33%); Profit Factor 1.381; max drawdown 0.90 USD (0.89%); Buy & Hold +22.98% as displayed.
 - **Not captured:** List of Trades, individual entry/exit reasons, full active-filter states, Commission/Slippage from Properties, Bar Magnifier, average trade, out-of-sample evaluation. Do **not** treat these unknowns as confirmed defaults.
 - **Comparison warning:** BT-001 uses different short leverage and TP than v1.5/v1.6 defaults. To isolate the new 24h exclusion filter, hold *all other Inputs and Properties* identical between v1.6-filter-ON and v1.6-filter-OFF trials.
+
+## BT-002 — No trades / input troubleshooting (2026-10-18)
+
+- **Source:** user screenshot of `BTC Futures Bot | FA | v1.7` on a Binance BTCUSDT perpetual 5-minute chart. Strategy Tester shows **“Trades are required to see strategy report”** and no recorded trades. Exact backtest date range is not visible.
+- **Visible open Inputs values:** 50% equity allocation, Long leverage 1x, Short leverage 1x, TP 0.5%, SL 0.5%, monthly EMA fast 1 / slow 2, weekly EMA fast 4 / slow 10, Long/Short enabled and profitable opposite 5m candle exit enabled. Because the Inputs dialog was still open, **whether edited values had been committed with OK is not fully verifiable**.
+- **Chart dashboard:** monthly **neutral**, weekly **bullish**, trade mode **halted**, currently no position; volume spike, RVOL and Delta displayed as off; 24-hour extreme filter says close to 24h high. Dashboard reflects active chart settings, which may differ from unsaved dialog edits.
+- **Definitive invalid configuration if applied:** monthly fast EMA length **1** equals the last confirmed monthly Close. Strict conditions `mClose > mFast` and `mClose < mFast` can never hold, so both Long and Short directional gates remain closed. Weekly EMA fast=1 would create the same issue.
+- **Possible independent quantity gate:** with initial capital 100 USD, allocation 50%, leverage 1x and a BTC price ~81,700 USD, order size is approximately 0.00061 BTC, then rounded down to `syminfo.mincontract`. If the contract minimum is 0.001 BTC, the computed order size becomes zero and is rejected; **actual `syminfo.mincontract` has not been verified**.
+- **Next controlled trial:** monthly EMA 2/4, weekly EMA 4/10; use initial capital 1000 USD and keep 50% allocation / 1x / TP 0.5% / SL 0.5%; confirm Inputs with OK and backtest range. This is **a debugging configuration, not evidence of profitability**. Compare on the same date window only after confirming any order-size constraint.
 
 ## Reporting format
 
