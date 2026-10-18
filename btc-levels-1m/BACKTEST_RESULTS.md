@@ -2,14 +2,15 @@
 
 **وضعیت:** هیچ نتیجه واقعی هنوز ثبت نشده است. این دفتر مستقل از `../btc-futures/BACKTEST_RESULTS.md` است.
 
-## Baseline v1.0
+## Baseline v1.1
 
 | Setting | Default |
 | --- | --- |
-| Source | `btc-levels-1m/strategy.pine` v1.0 |
+| Source | `btc-levels-1m/strategy.pine` v1.1 |
 | Instrument | BTC linear USD/USDT perpetual (record exact ticker) |
 | Chart | 1m / standard candles only |
 | Rolling high/low windows | 3h, 6h, 9h, 12h, 24h, 48h; 12 plotted levels, signal bar excluded |
+| Triangle overlay (visual only) | ON, 90% transparent default; base 48h high/low at x=now-1440, apex latest 24h range midpoint at x=now; no trading logic changes |
 | Entry periods | All 6 enabled |
 | Require close near any selected line | ON, within 0.05% of price level |
 | Direction | Confirmed last DAILY close > prior daily close AND WEEKLY close > prior weekly close = Long; both < = Short |
@@ -26,7 +27,13 @@
 
 | Run ID | Version | Exact symbol | Date range UTC | Changes from baseline | Trades | Win Rate (after costs) | Net PnL % | Profit Factor | Max DD % | Notes |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| — | v1.0 | — | — | Baseline | — | — | — | — | — | Not yet tested |
+| — | v1.1 | — | — | Baseline with optional translucent triangle (visual only) | — | — | — | — | — | Not yet tested |
+
+## v1.1 visual-only validation plan (no observed backtest results)
+
+- On a standard 1-minute BTC chart with at least 48 hours of complete history, inspect the schematic triangle from current rolling 48h high/low levels (left base, shown 24h ago) to the midpoint of the current 24h high/low levels (apex at last bar).
+- Switch the triangle ON/OFF and change opacity from 70 to 99; orders and Strategy Tester results must remain unchanged. With insufficient data or on a non-1m chart the triangle should not appear.
+- Realtime updates should move the existing three lines + fill, not allocate new triangle objects per candle. Pine compile and visual rendering still require TradingView verification.
 
 ## Controlled tests to run
 

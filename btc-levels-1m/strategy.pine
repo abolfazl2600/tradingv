@@ -1,10 +1,10 @@
 //@version=6
 //@strategy_alert_message {{strategy.order.alert_message}}
 
-// BTC Levels 1m Bot v1.0 — a NEW, independent strategy.
+// BTC Levels 1m Bot v1.1 — a NEW, independent strategy.
 // The original btc-futures/ strategy is not imported or modified.
 // Standard 1-minute candles; all level windows exclude the signal candle.
-strategy("BTC Levels 1m | FA | v1.0",
+strategy("BTC Levels 1m | FA | v1.1",
      overlay = true,
      initial_capital = 1000,
      currency = currency.USD,
@@ -153,7 +153,7 @@ enterShort = canEnter and shortAllowed and lineEntryOK and
 // On subsequent bars the exits are updated from the actual average fill.
 int tpTicks = math.max(1, int(math.round(close * tpPct / 100 / syminfo.mintick)))
 int slTicks = math.max(1, int(math.round(close * slPct / 100 / syminfo.mintick)))
-string baseAlert = '"strategy":"BTC-levels-1m","version":"1.0","symbol":"' +
+string baseAlert = '"strategy":"BTC-levels-1m","version":"1.1","symbol":"' +
      syminfo.tickerid + '","timeframe":"1"'
 
 if enterLong
@@ -194,6 +194,13 @@ show9h = input.bool(true, "نمایش خطوط ۹ ساعت", group = gView)
 show12h = input.bool(true, "نمایش خطوط ۱۲ ساعت", group = gView)
 show24h = input.bool(true, "نمایش خطوط ۲۴ ساعت", group = gView)
 show48h = input.bool(true, "نمایش خطوط ۴۸ ساعت", group = gView)
+showTriangle = input.bool(true, "نمایش مثلث کمرنگ ۴۸ به ۲۴ ساعت",
+     tooltip = "قاعده: سقف و کف ۴۸ ساعت گذشته در مرز ۲۴ ساعت قبل؛ رأس: وسط سقف و کف ۲۴ ساعت در کندل آخر. صرفاً نمایشی.",
+     group = gView)
+triangleOpacity = input.int(90, "شفافیت داخل مثلث (%)",
+     minval = 70, maxval = 99, step = 1,
+     tooltip = "عدد بیشتر یعنی مثلث کمرنگ‌تر. تأثیری بر سیگنال‌ها ندارد.",
+     group = gView)
 showDash = input.bool(true, "نمایش داشبورد", group = gView)
 
 plot(show3h and is1m and ready3 ? h3 : na, "سقف ۳ ساعت",
@@ -222,6 +229,59 @@ plot(show48h and is1m and ready48 ? l48 : na, "کف ۴۸ ساعت",
      color = color.yellow, linewidth = 2, style = plot.style_stepline)
 plot(activeTP, "حد سود فعال", color = color.green, style = plot.style_linebr)
 plot(activeSL, "حد ضرر فعال", color = color.red, style = plot.style_linebr)
+// ─────────────────────────────────────────────────────────────────────
+// 8. VISUAL-ONLY live triangular range envelope (latest 48h → 24h).
+//    Base: latest rolling 48h high/low, placed at x = now - 24h.
+//    Apex: midpoint of latest rolling 24h high/low, placed at now.
+//    The base location is SCHEMATIC, not the historical value 24h ago.
+//    Reuse line IDs and one linefill; NEVER alter signals or positions.
+// ─────────────────────────────────────────────────────────────────────
+var line funnelTop = na
+var line funnelBottom = na
+var line funnelBase = na
+var linefill funnelFill = na
+bool funnelReady = showTriangle and is1m and ready48 and ready24 and
+     not na(h48) and not na(l48) and not na(h24) and not na(l24) and
+     h48 > l48 and h24 >= l24
+if barstate.islast
+    if funnelReady
+        int leftBar = bar_index - 1440
+        int rightBar = bar_index
+        float apex = (h24 + l24) / 2.0
+        color edgeCol = color.new(color.yellow, math.max(55, triangleOpacity - 18))
+        color fillCol = color.new(color.yellow, triangleOpacity)
+        if na(funnelTop)
+            funnelTop := line.new(leftBar, h48, rightBar, apex,
+                 xloc = xloc.bar_index, extend = extend.none,
+                 color = edgeCol, width = 1)
+            funnelBottom := line.new(leftBar, l48, rightBar, apex,
+                 xloc = xloc.bar_index, extend = extend.none,
+                 color = edgeCol, width = 1)
+            funnelBase := line.new(leftBar, h48, leftBar, l48,
+                 xloc = xloc.bar_index, extend = extend.none,
+                 color = edgeCol, width = 1)
+            funnelFill := linefill.new(funnelTop, funnelBottom, fillCol)
+        else
+            line.set_xy1(funnelTop, leftBar, h48)
+            line.set_xy2(funnelTop, rightBar, apex)
+            line.set_xy1(funnelBottom, leftBar, l48)
+            line.set_xy2(funnelBottom, rightBar, apex)
+            line.set_xy1(funnelBase, leftBar, h48)
+            line.set_xy2(funnelBase, leftBar, l48)
+            line.set_color(funnelTop, edgeCol)
+            line.set_color(funnelBottom, edgeCol)
+            line.set_color(funnelBase, edgeCol)
+            linefill.set_color(funnelFill, fillCol)
+    else
+        if not na(funnelTop)
+            line.delete(funnelTop)
+            line.delete(funnelBottom)
+            line.delete(funnelBase)
+            funnelTop := na
+            funnelBottom := na
+            funnelBase := na
+            funnelFill := na
+
 plotshape(enterLong, title = "ورود لانگ", style = shape.triangleup,
      location = location.belowbar, color = color.green, size = size.tiny)
 plotshape(enterShort, title = "ورود شورت", style = shape.triangledown,
