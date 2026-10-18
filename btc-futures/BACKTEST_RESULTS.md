@@ -2,7 +2,7 @@
 
 ثبت آزمایش‌های TradingView برای مقایسه کانفیگ‌ها. نتیجه‌ها فقط از بک‌تست یا شواهد واقعی کاربر ثبت می‌شوند؛ مقدارهای نامعلوم با «تأیید نشده» مشخص می‌شوند.
 
-## Baseline — strategy.pine v1.7
+## Baseline — strategy.pine v1.8
 
 | Setting | Default |
 | --- | --- |
@@ -17,6 +17,8 @@
 | TP/SL (price move) | 0.5% / 1.0% |
 | Profitable opposite 5m candle exit | Enabled; opposite 5m close AND strategy.openprofit > 0 (gross unrealized PnL) |
 | 24h high/low proximity block | Enabled; no new entry when confirmed 15m close is within 1.0% of either rolling 24h extreme (96 confirmed bars, including signal bar) |
+| 24h inside preceding 48h entry gate | Enabled. Last 96 confirmed M15 highs/lows must fit within **the preceding** 192 M15 bars' extremes. Requires continuous 72h history. Disabled gate permits entries without this check. |
+| Chart range lines | Show 24h High/Low (aqua) and previous non-overlapping 48h High/Low (yellow); separately toggled, default ON |
 | Volume Spike | Enabled; at most 3 × SMA(volume, 20)[1] |
 | RVOL | Enabled; minimum 0.8; 14 prior same-time daily slots |
 | Estimated Delta | Enabled; minimum 10 one-minute candles; 80% volume coverage |
@@ -34,7 +36,7 @@
 | BT-002 | v1.7 | Binance BTCUSDT perpetual (TradingView display BTCUSDT.P; exact ticker to confirm) | Not shown in screenshot | 5m chart; 50% allocation; 1x/1x; TP 0.5%, SL 0.5%; monthly EMA 1/2 and weekly EMA 4/10 shown in open Inputs (application unverified); opposite 5m profitable exit checked | 0 (as displayed) | N/A | N/A | N/A | N/A | N/A | No trades; monthly regime shown neutral, weekly bullish. Details below |
 | BT-003 | v1.7 | Binance BTCUSDT (chart says Bitcoin/TetherUS; likely spot; verify) | Sep 28, 2026 – Oct 18, 2026 (date selector, timezone unverified) | Donchian M15; chart 5m; allocation 50%; leverage L/S 1x/1x; TP/SL 1%/1%; monthly EMA 3/6, weekly EMA 4/10; opposite profitable 5m exit ON; Spike ON (15,3x); RVOL ON (14 days, >=0.8); Delta OFF; 24h high/low ON (0.4%) | 18 | 94.44 (17/18) | +1.22 | 2.293 | 1.08 | Expectancy +0.04 USD (+0.07%) shown on Distribution | New screenshots 2026-10-18: Net PnL +1.22 USD, Gross Profit 2.17 USD, Gross Loss 0.94 USD, Buy & Hold -2.43%, 0 margin calls; see details below |
 | BT-004 | v1.7 | Binance BTCUSDT (chart Bitcoin/TetherUS, likely spot; exact ticker unverified) | Sep 28, 2026 – Oct 18, 2026 (selector timezone unverified) | Donchian M15, 5m chart; 50% allocation; L/S 1x; TP 2%, SL 1%; opposite-profitable-5m exit OFF; monthly EMA 3/6; weekly EMA 4/10; signal EMA 2/5, RSI 9 (Long min 8, Short max 4), Donchian 17; Spike ON (24, 2x); RVOL ON (14 days, >=0.8); Delta OFF; 24h range ON 0.4% | 6 | 50.00 (3/6) | +1.25 shown in Key stats | 1.674 | 1.53 | Expectancy +0.19 USD / 0.40% as displayed | Gross profit 2.83 USD, gross loss 1.69 USD; all six closed trades LONG; possible open PnL/report timing difference; see details below |
-| — | v1.7 | — | — | Baseline, execution 5m / entry M15, 1x/1x, profitable 5m reverse-candle exit ON | — | — | — | — | — | — | Not yet tested |
+| — | v1.8 | — | — | Baseline v1.8, 24h-within-preceding-48h ON, 24h/48h lines ON; actual user test not yet received | — | — | — | — | — | — | Not yet tested |
 
 ## BT-001 — Screenshot-derived details (2026-10-18)
 
@@ -75,6 +77,14 @@
 - **Comparison with BT-003:** v1.7 on a similar Binance BTCUSDT 5m chart and Sep 28–Oct 18 window yielded **18 trades, 94.44% wins, net +1.22%, Profit Factor 2.293, drawdown 1.08%**, with exit ON, TP 1%, Spike 15/3x. **BT-004 changed multiple variables at once**: exit ON→OFF, TP 1→2%, Spike 15/3x→24/2x, plus signal EMA/RSI/Donchian details not previously verified. Hence this is **not** a controlled experiment isolating the 5m exit rule.
 - **Leverage troubleshooting:** This run visibly uses **1x for both sides**, so it does **not** establish whether 2x can trade with otherwise identical settings. For 2x, keep all other Inputs and Properties unchanged, change only leverage, and capture Strategy Properties + exact symbol specification. No strategy code changes were made for this log entry.
 - **Next experiment:** on a fixed symbol (ideally `BINANCE:BTCUSDT.P`, once a separate futures baseline is established) and fixed date range, start with this BT-004 config and toggle **only profitable opposite-5m exit OFF/ON**, then compare trades, realized Net PnL, Profit Factor, drawdown and equity. Next test 1x vs 2x **changing only leverage**. Hold commissions, margin settings, slippage and instrument constant.
+
+## v1.8 verification plan (not a backtest result)
+
+- **Non-overlapping periods:** 24h = 96 recent confirmed M15 bars [0..95]; comparison 48h = the immediately preceding 192 M15 bars [96..287]. A conventional last-48h window that *includes* the last-24h window would make the containment check always true; this design deliberately avoids that tautology.
+- **TradingView review:** Set standard chart to **5m**; wait for sufficient continuous 15m history (288 bars). Verify four stair-step lines (aqua 24h, yellow older 48h), dashboard status and long/short entry gate.
+- **Logic cases:** (1) High24 100, Low24 90; HighPrev48 110, LowPrev48 80 => allowed. (2) High24 115 => blocked. (3) Low24 75 => blocked. (4) either boundary equal => allowed. (5) missing or gapped 72h history => blocked if enabled, bypassed if disabled.
+- **Isolation test:** Compare v1.8 gate ON/OFF on the same symbol, 5m chart, period, other inputs, commission, slippage and margin. Disabling the *separate* near-24h-extreme filter for this controlled test helps distinguish which gate suppressed a potential entry.
+- **No results claim:** Pine compilation and Strategy Tester results remain unverified until the user tests them. Existing BT-001 through BT-004 remain historical and must not be re-labelled as v1.8.
 
 ## Reporting format
 
