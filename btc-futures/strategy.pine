@@ -1,11 +1,11 @@
 //@version=6
 //@strategy_alert_message {{strategy.order.alert_message}}
 
-// BTC Futures Bot v1.7 — Pine Script v6
+// BTC Futures Bot v1.8 — Pine Script v6
 // Standalone TradingView research strategy. No broker API or live order placement.
 // IMPORTANT: use a standard 5m chart for 5m exits; entry indicators remain 15m.
 // Linear USD/USDT-quoted contracts only. Never backtest 5m exits on a 15m chart.
-strategy("BTC Futures Bot | FA | v1.7",
+strategy("BTC Futures Bot | FA | v1.8",
      overlay = true,
      initial_capital = 100,
      currency = currency.USD,
@@ -159,7 +159,20 @@ rangeBufferPct = input.float(1.0, "فاصله ممنوع از سقف یا کف (
 // Rolling 24h range is derived from 96 completed 15m candles below.
 
 // ─────────────────────────────────────────────────────────────────────
-// 9. 5m strategy execution with confirmed 15m entry signals
+// 9. Optional non-overlapping 24h-inside-prior-48h entry strategy
+// ─────────────────────────────────────────────────────────────────────
+// An overlapping 48h lookback always contains its own most recent 24h.
+// Therefore compare the newest 24h [0..95] with the PRECEDING 48h
+// [96..287]. The windows do not overlap. Missing data fails closed.
+// This is a gate on existing confirmed 15m signals, NOT an entry trigger.
+gInside = "۹. استراتژی ۲۴ ساعت داخل ۴۸ ساعت قبلی"
+useInside48 = input.bool(true, "فعال‌سازی شرط محدوده ۲۴ در ۴۸ ساعت",
+     tooltip = "سقف ۲۴ ساعت اخیر باید کمتر یا مساوی سقف ۴۸ ساعت قبل از آن، و کف آن بیشتر یا مساوی کف همان ۴۸ ساعت باشد. این قابلیت فقط ورودهای جدید را فیلتر می‌کند.",
+     group = gInside)
+// High and low for the preceding 48h are calculated on 15m bars [96..287].
+
+// ─────────────────────────────────────────────────────────────────────
+// 10. 5m strategy execution with confirmed 15m entry signals
 // ─────────────────────────────────────────────────────────────────────
 // IMPORTANT: the chart is 5m. Only its last candle in each 15m interval
 // can place an entry. lookahead_off returns the completed 15m series on
@@ -178,7 +191,9 @@ f_signals15() =>
     bool breakShort15 = ta.crossunder(close, lower15) and ef < es
     [ef, es, ta.rsi(close, rsiLen), emaLong15, emaShort15,
      breakLong15, breakShort15, volume, ta.sma(volume, spikeLen)[1],
-     close, ta.highest(high, 96), ta.lowest(low, 96), time, time[95]]
+     close, ta.highest(high, 96), ta.lowest(low, 96),
+     ta.highest(high[96], 192), ta.lowest(low[96], 192),
+     time, time[95], time[287]]
 
 f_rvol15() =>
     float histSum = 0.0
@@ -196,7 +211,8 @@ f_rvol15() =>
 // Each request calculates over M15 OHLCV, avoiding accidental use of
 // 5m indicators when optimizing against the previous strategy.
 [emaFast, emaSlow, rsiValue, emaLong, emaShort, breakLong, breakShort,
- volume15, avgVolume, close15, high24h, low24h, time15, time95] = request.security(
+ volume15, avgVolume, close15, high24h, low24h,
+ highPrior48, lowPrior48, time15, time95, time287] = request.security(
      syminfo.tickerid, "15", f_signals15(), lookahead = barmerge.lookahead_off)
 [histVolumeSum, histVolumeCount] = request.security(
      syminfo.tickerid, "15", f_rvol15(), lookahead = barmerge.lookahead_off)
@@ -223,12 +239,33 @@ bool near24hHigh = rangeReady and math.abs(close15 - high24h) / high24h * 100 <=
 bool near24hLow = rangeReady and math.abs(close15 - low24h) / low24h * 100 <= rangeBufferPct
 bool rangeEntryOK = not use24hRange or (rangeReady and not near24hHigh and not near24hLow)
 
+// Require 288 continuous 15m candles (72h), with exactly 96 bars
+// for the current 24h and 192 older bars for the preceding 48h.
+bool insideReady = rangeReady and not na(time287) and
+     time15 - time287 == 287 * 15 * 60 * 1000 and
+     not na(highPrior48) and not na(lowPrior48) and
+     highPrior48 > 0 and lowPrior48 > 0
+bool inside48 = insideReady and high24h <= highPrior48 and low24h >= lowPrior48
+bool insideEntryOK = not useInside48 or inside48
+
+// Store levels only once the 15m signal bar has closed, preventing
+// unstable range lines on the first two 5m bars of an open 15m candle.
+var float lineHigh24 = na
+var float lineLow24 = na
+var float lineHigh48 = na
+var float lineLow48 = na
+if is15mClose
+    lineHigh24 := rangeReady ? high24h : na
+    lineLow24 := rangeReady ? low24h : na
+    lineHigh48 := insideReady ? highPrior48 : na
+    lineLow48 := insideReady ? lowPrior48 : na
+
 bool useEma = model == "تقاطع EMA"
 bool rawLong = useEma ? emaLong : breakLong
 bool rawShort = useEma ? emaShort : breakShort
 
 // ─────────────────────────────────────────────────────────────────────
-// 10. Symbol guard, sizing, and entry only after 15m close
+// 11. Symbol guard, sizing, and entry only after 15m close
 // ─────────────────────────────────────────────────────────────────────
 validQuote = syminfo.currency == "USD" or syminfo.currency == "USDT"
 float quoteEquity = nz(strategy.convert_to_symbol(math.max(strategy.equity, 0)),
@@ -244,10 +281,10 @@ float shortQty = contractValue > 0 and qtyStep > 0 ?
 canEnter = is15mClose and validQuote and
      strategy.position_size == 0 and strategy.equity > 0
 volumeOK = spikeOK and rvolOK
-enterLong = canEnter and rangeEntryOK and longAllowed and rawLong and
+enterLong = canEnter and rangeEntryOK and insideEntryOK and longAllowed and rawLong and
      rsiValue >= rsiLongMin and volumeOK and deltaLongOK and
      not na(longQty) and longQty >= qtyStep
-enterShort = canEnter and rangeEntryOK and shortAllowed and rawShort and
+enterShort = canEnter and rangeEntryOK and insideEntryOK and shortAllowed and rawShort and
      rsiValue <= rsiShortMax and volumeOK and deltaShortOK and
      not na(shortQty) and shortQty >= qtyStep
 
@@ -260,12 +297,12 @@ int slTicks = math.max(1,
      int(math.round(close * slPct / 100.0 / syminfo.mintick)))
 
 // ─────────────────────────────────────────────────────────────────────
-// 11. Entry orders and protective OCA exits
+// 12. Entry orders and protective OCA exits
 // ─────────────────────────────────────────────────────────────────────
 var string activeTradeId = ""
 var string tpAlert = ""
 var string slAlert = ""
-string baseJSON = '"schema":"btc-futures-v1","version":"1.7","symbol":"' +
+string baseJSON = '"schema":"btc-futures-v1","version":"1.8","symbol":"' +
      syminfo.tickerid + '","timeframe":"' + timeframe.period + '"'
 
 if enterLong
@@ -303,7 +340,7 @@ if enterShort
          alert_profit = tpAlert, alert_loss = slAlert)
 
 // ─────────────────────────────────────────────────────────────────────
-// 12. Position management:
+// 13. Position management:
 // (a) trend no longer aligned -> close;
 // (b) optional opposite *confirmed* 5m candle AND positive open profit -> close;
 // (c) otherwise maintain exact TP/SL based on entry average.
@@ -358,12 +395,23 @@ if strategy.position_size < 0
              alert_profit = tpAlert, alert_loss = slAlert)
 
 // ─────────────────────────────────────────────────────────────────────
-// 13. Chart display and small Persian dashboard
+// 14. Chart display and small Persian dashboard
 // ─────────────────────────────────────────────────────────────────────
-gView = "۹. نمایش"
+gView = "۱۰. نمایش"
 showDash = input.bool(true, "نمایش داشبورد", group = gView)
+show24hLines = input.bool(true, "نمایش خطوط سقف/کف ۲۴ ساعت", group = gView)
+show48hLines = input.bool(true, "نمایش خطوط سقف/کف ۴۸ ساعت قبلی", group = gView)
 plot(emaFast, "EMA سریع", color = color.teal)
 plot(emaSlow, "EMA کند", color = color.orange)
+// Four independent, stair-stepped bounds on confirmed 15m updates.
+plot(show24hLines and is5m ? lineHigh24 : na, "سقف ۲۴ ساعت",
+     color = color.aqua, linewidth = 2, style = plot.style_stepline)
+plot(show24hLines and is5m ? lineLow24 : na, "کف ۲۴ ساعت",
+     color = color.aqua, linewidth = 2, style = plot.style_stepline)
+plot(show48hLines and is5m ? lineHigh48 : na, "سقف ۴۸ ساعت قبلی",
+     color = color.yellow, linewidth = 2, style = plot.style_stepline)
+plot(show48hLines and is5m ? lineLow48 : na, "کف ۴۸ ساعت قبلی",
+     color = color.yellow, linewidth = 2, style = plot.style_stepline)
 plot(activeTP, "حد سود", color = color.green, style = plot.style_linebr)
 plot(activeSL, "حد ضرر", color = color.red, style = plot.style_linebr)
 plotshape(enterLong, title = "سیگنال لانگ", style = shape.triangleup,
@@ -371,7 +419,7 @@ plotshape(enterLong, title = "سیگنال لانگ", style = shape.triangleup,
 plotshape(enterShort, title = "سیگنال شورت", style = shape.triangledown,
      location = location.abovebar, color = color.red, size = size.small)
 
-var table dash = table.new(position.top_right, 2, 9, border_width = 1)
+var table dash = table.new(position.top_right, 2, 10, border_width = 1)
 string mText = monthlyBull ? "صعودی" : monthlyBear ? "نزولی" : "خنثی"
 string wText = weeklyBull ? "صعودی" : weeklyBear ? "نزولی" : "خنثی"
 string modeText = not is5m ? "چارت ۵ دقیقه لازم" :
@@ -388,6 +436,9 @@ string rangeText = not use24hRange ? "خاموش" :
      near24hHigh and near24hLow ? "نزدیک سقف/کف" :
      near24hHigh ? "نزدیک سقف" :
      near24hLow ? "نزدیک کف" : "ورود مجاز"
+string insideText = not useInside48 ? "خاموش" :
+     not insideReady ? "داده ناکافی" :
+     inside48 ? "محدوده داخلی" : "خارج از ۴۸ ساعت"
 string positionText = strategy.position_size > 0 ? "لانگ" :
      strategy.position_size < 0 ? "شورت" : "بدون پوزیشن"
 
@@ -414,5 +465,9 @@ if barstate.islast
         table.cell(dash, 1, 8, rangeText,
              bgcolor = not use24hRange ? color.gray : rangeEntryOK ? color.green : color.red,
              text_color = color.white)
+        table.cell(dash, 0, 9, "۲۴ داخل ۴۸ قبلی", bgcolor = color.black, text_color = color.white)
+        table.cell(dash, 1, 9, insideText,
+             bgcolor = not useInside48 ? color.gray : insideEntryOK ? color.green : color.red,
+             text_color = color.white)
     else
-        table.clear(dash, 0, 0, 1, 8)
+        table.clear(dash, 0, 0, 1, 9)
