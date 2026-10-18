@@ -1,10 +1,10 @@
 //@version=6
 //@strategy_alert_message {{strategy.order.alert_message}}
 
-// BTC Levels 1m Bot v1.1 — a NEW, independent strategy.
+// BTC Levels 1m Bot v1.2 — a NEW, independent strategy.
 // The original btc-futures/ strategy is not imported or modified.
 // Standard 1-minute candles; all level windows exclude the signal candle.
-strategy("BTC Levels 1m | FA | v1.1",
+strategy("BTC Levels 1m | FA | v1.2",
      overlay = true,
      initial_capital = 1000,
      currency = currency.USD,
@@ -27,6 +27,9 @@ allowShort = input.bool(true, "اجازه ورود شورت", group = gEntry)
 requireLineClose = input.bool(true, "الزام بسته‌شدن قیمت نزدیک یکی از خطوط",
      tooltip = "روشن: کلوز کندل تاییدشده ۱ دقیقه باید در فاصله مجاز از دست‌کم یکی از خطوط فعال باشد. خاموش: با هر کلوز ۱ دقیقه و هم‌جهتی روند روزانه/هفتگی اجازه ورود می‌دهد (با رعایت فاصله بین ورودها).",
      group = gEntry)
+useTriangleDirection = input.bool(true, "الزام هم‌جهتی مثلث ۲۴/۴۸ ساعت",
+     tooltip = "مقایسه مرکز (سقف+کف)/۲ محدوده ۲۴ ساعت با ۴۸ ساعت؛ بالاتر: فقط لانگ، پایین‌تر: فقط شورت، برابر/ناموجود: ممنوع. جهت روزانه و هفتگی نیز باید همسو باشد. مستقل از نمایش.",
+     group = gEntry)
 tolerancePct = input.float(0.05, "حداکثر فاصله کلوز از خط (%)",
      minval = 0.00, maxval = 2.0, step = 0.01,
      tooltip = "۰٪ به معنی برخورد دقیق کلوز با سطح است؛ برای قیمت‌های پیوسته معمولاً ۰٫۰۵٪ عملی‌تر است.",
@@ -38,6 +41,7 @@ entryCooldown = input.int(15, "حداقل فاصله بین ورودها (کند
 // 2. Choose which historical windows can trigger an entry
 // ─────────────────────────────────────────────────────────────────────
 gPeriods = "۲. خطوط مجاز برای سیگنال"
+use1h = input.bool(true, "سیگنال از سقف/کف ۱ ساعت", group = gPeriods)
 use3h = input.bool(true, "سیگنال از سقف/کف ۳ ساعت", group = gPeriods)
 use6h = input.bool(true, "سیگنال از سقف/کف ۶ ساعت", group = gPeriods)
 use9h = input.bool(true, "سیگنال از سقف/کف ۹ ساعت", group = gPeriods)
@@ -80,9 +84,11 @@ shortAllowed = allowShort and dailyBear and weeklyBear
 
 // ─────────────────────────────────────────────────────────────────────
 // 5. Rolling HIGH and LOW from previous closed 1m candles:
-//    3h=180, 6h=360, 9h=540, 12h=720, 24h=1440, 48h=2880.
+//    1h=60, 3h=180, 6h=360, 9h=540, 12h=720, 24h=1440, 48h=2880.
 //    [1] ensures the signal candle cannot define its own entry level.
 // ─────────────────────────────────────────────────────────────────────
+float h1 = ta.highest(high[1], 60)
+float l1 = ta.lowest(low[1], 60)
 float h3 = ta.highest(high[1], 180)
 float l3 = ta.lowest(low[1], 180)
 float h6 = ta.highest(high[1], 360)
@@ -98,6 +104,8 @@ float l48 = ta.lowest(low[1], 2880)
 
 // A complete 24/7 history for each enabled window must be available.
 // A missing minute or a chart-session gap invalidates that window.
+ready1 = not na(time[60]) and time - time[60] == 60 * 60000 and
+     not na(h1) and not na(l1)
 ready3 = not na(time[180]) and time - time[180] == 180 * 60000 and
      not na(h3) and not na(l3)
 ready6 = not na(time[360]) and time - time[360] == 360 * 60000 and
@@ -111,18 +119,32 @@ ready24 = not na(time[1440]) and time - time[1440] == 1440 * 60000 and
 ready48 = not na(time[2880]) and time - time[2880] == 2880 * 60000 and
      not na(h48) and not na(l48)
 
-// Near ANY selected high OR low qualifies. Trade direction comes
-// solely from confirmed D+W alignment, not from which line was hit.
+// Direction is the relative shift of the 24h-range midpoint versus
+// the 48h-range midpoint, using only PRIOR CLOSED 1m bars.
+// This is a range-bias heuristic, not a verified trend forecast.
+bool triangleReady = ready24 and ready48 and
+     not na(h24) and not na(l24) and not na(h48) and not na(l48) and
+     h48 > l48 and h24 >= l24
+float mid24 = triangleReady ? (h24 + l24) / 2.0 : na
+float mid48 = triangleReady ? (h48 + l48) / 2.0 : na
+bool triangleBull = triangleReady and mid24 > mid48
+bool triangleBear = triangleReady and mid24 < mid48
+bool triangleLongOK = not useTriangleDirection or triangleBull
+bool triangleShortOK = not useTriangleDirection or triangleBear
+
+// Near ANY selected high OR low qualifies, but trade direction
+// requires D+W confirmation plus optional matching triangle bias.
 f_near(float level) =>
     not na(level) and level > 0 and
      100 * math.abs(close - level) / level <= tolerancePct
+hit1 = use1h and ready1 and (f_near(h1) or f_near(l1))
 hit3 = use3h and ready3 and (f_near(h3) or f_near(l3))
 hit6 = use6h and ready6 and (f_near(h6) or f_near(l6))
 hit9 = use9h and ready9 and (f_near(h9) or f_near(l9))
 hit12 = use12h and ready12 and (f_near(h12) or f_near(l12))
 hit24 = use24h and ready24 and (f_near(h24) or f_near(l24))
 hit48 = use48h and ready48 and (f_near(h48) or f_near(l48))
-hitAnyLevel = hit3 or hit6 or hit9 or hit12 or hit24 or hit48
+hitAnyLevel = hit1 or hit3 or hit6 or hit9 or hit12 or hit24 or hit48
 lineEntryOK = not requireLineClose or hitAnyLevel
 
 // ─────────────────────────────────────────────────────────────────────
@@ -144,16 +166,16 @@ var int lastEntryBar = na
 cooldownOK = na(lastEntryBar) or bar_index - lastEntryBar >= entryCooldown
 canEnter = is1m and validQuote and barstate.isconfirmed and
      strategy.position_size == 0 and strategy.equity > 0 and cooldownOK
-enterLong = canEnter and longAllowed and lineEntryOK and
+enterLong = canEnter and longAllowed and lineEntryOK and triangleLongOK and
      not na(longQty) and longQty >= lotStep
-enterShort = canEnter and shortAllowed and lineEntryOK and
+enterShort = canEnter and shortAllowed and lineEntryOK and triangleShortOK and
      not na(shortQty) and shortQty >= lotStep
 
 // TP/SL orders use ticks relative to the emulated entry fill price.
 // On subsequent bars the exits are updated from the actual average fill.
 int tpTicks = math.max(1, int(math.round(close * tpPct / 100 / syminfo.mintick)))
 int slTicks = math.max(1, int(math.round(close * slPct / 100 / syminfo.mintick)))
-string baseAlert = '"strategy":"BTC-levels-1m","version":"1.1","symbol":"' +
+string baseAlert = '"strategy":"BTC-levels-1m","version":"1.2","symbol":"' +
      syminfo.tickerid + '","timeframe":"1"'
 
 if enterLong
@@ -184,10 +206,11 @@ if strategy.position_size < 0
          alert_message = '{' + baseAlert + ',"event":"exit","side":"short"}')
 
 // ─────────────────────────────────────────────────────────────────────
-// 7. All twelve lines are independently visible by window. Plotting
+// 7. All fourteen lines are independently visible by window. Plotting
 //    does NOT change which line windows are allowed for entry.
 // ─────────────────────────────────────────────────────────────────────
 gView = "۴. خطوط و نمایش"
+show1h = input.bool(true, "نمایش خطوط ۱ ساعت", group = gView)
 show3h = input.bool(true, "نمایش خطوط ۳ ساعت", group = gView)
 show6h = input.bool(true, "نمایش خطوط ۶ ساعت", group = gView)
 show9h = input.bool(true, "نمایش خطوط ۹ ساعت", group = gView)
@@ -195,14 +218,18 @@ show12h = input.bool(true, "نمایش خطوط ۱۲ ساعت", group = gView)
 show24h = input.bool(true, "نمایش خطوط ۲۴ ساعت", group = gView)
 show48h = input.bool(true, "نمایش خطوط ۴۸ ساعت", group = gView)
 showTriangle = input.bool(true, "نمایش مثلث کمرنگ ۴۸ به ۲۴ ساعت",
-     tooltip = "قاعده: سقف و کف ۴۸ ساعت گذشته در مرز ۲۴ ساعت قبل؛ رأس: وسط سقف و کف ۲۴ ساعت در کندل آخر. صرفاً نمایشی.",
+     tooltip = "قاعده: سقف/کف ۴۸ ساعت، رأس: مرکز ۲۴ ساعت؛ بالا نسبت به مرکز قاعده سبز/صعودی، پایین قرمز/نزولی. نمایش مستقل از فیلتر معاملات است.",
      group = gView)
 triangleOpacity = input.int(90, "شفافیت داخل مثلث (%)",
      minval = 70, maxval = 99, step = 1,
-     tooltip = "عدد بیشتر یعنی مثلث کمرنگ‌تر. تأثیری بر سیگنال‌ها ندارد.",
+     tooltip = "عدد بیشتر یعنی مثلث کمرنگ‌تر. روی شرط ورود تأثیری ندارد.",
      group = gView)
 showDash = input.bool(true, "نمایش داشبورد", group = gView)
 
+plot(show1h and is1m and ready1 ? h1 : na, "سقف ۱ ساعت",
+     color = color.purple, linewidth = 2, style = plot.style_stepline)
+plot(show1h and is1m and ready1 ? l1 : na, "کف ۱ ساعت",
+     color = color.purple, linewidth = 2, style = plot.style_stepline)
 plot(show3h and is1m and ready3 ? h3 : na, "سقف ۳ ساعت",
      color = color.fuchsia, linewidth = 2, style = plot.style_stepline)
 plot(show3h and is1m and ready3 ? l3 : na, "کف ۳ ساعت",
@@ -230,26 +257,30 @@ plot(show48h and is1m and ready48 ? l48 : na, "کف ۴۸ ساعت",
 plot(activeTP, "حد سود فعال", color = color.green, style = plot.style_linebr)
 plot(activeSL, "حد ضرر فعال", color = color.red, style = plot.style_linebr)
 // ─────────────────────────────────────────────────────────────────────
-// 8. VISUAL-ONLY live triangular range envelope (latest 48h → 24h).
+// 8. LIVE triangular range-bias envelope (latest 48h → 24h).
 //    Base: latest rolling 48h high/low, placed at x = now - 24h.
 //    Apex: midpoint of latest rolling 24h high/low, placed at now.
 //    The base location is SCHEMATIC, not the historical value 24h ago.
-//    Reuse line IDs and one linefill; NEVER alter signals or positions.
+//    Color and label reflect the same optional direction gate; display is independent.
 // ─────────────────────────────────────────────────────────────────────
 var line funnelTop = na
 var line funnelBottom = na
 var line funnelBase = na
+var line funnelAxis = na
 var linefill funnelFill = na
-bool funnelReady = showTriangle and is1m and ready48 and ready24 and
-     not na(h48) and not na(l48) and not na(h24) and not na(l24) and
-     h48 > l48 and h24 >= l24
+var label funnelLabel = na
+bool funnelReady = showTriangle and is1m and triangleReady
 if barstate.islast
     if funnelReady
         int leftBar = bar_index - 1440
         int rightBar = bar_index
-        float apex = (h24 + l24) / 2.0
-        color edgeCol = color.new(color.yellow, math.max(55, triangleOpacity - 18))
-        color fillCol = color.new(color.yellow, triangleOpacity)
+        float apex = mid24
+        color directionColor = triangleBull ? color.green :
+             triangleBear ? color.red : color.gray
+        string directionLabel = triangleBull ? "▲ صعودی" :
+             triangleBear ? "▼ نزولی" : "■ خنثی"
+        color edgeCol = color.new(directionColor, math.max(55, triangleOpacity - 18))
+        color fillCol = color.new(directionColor, triangleOpacity)
         if na(funnelTop)
             funnelTop := line.new(leftBar, h48, rightBar, apex,
                  xloc = xloc.bar_index, extend = extend.none,
@@ -260,7 +291,14 @@ if barstate.islast
             funnelBase := line.new(leftBar, h48, leftBar, l48,
                  xloc = xloc.bar_index, extend = extend.none,
                  color = edgeCol, width = 1)
+            funnelAxis := line.new(leftBar, mid48, rightBar, apex,
+                 xloc = xloc.bar_index, extend = extend.none,
+                 color = edgeCol, width = 2, style = line.style_dashed)
             funnelFill := linefill.new(funnelTop, funnelBottom, fillCol)
+            funnelLabel := label.new(rightBar, apex, directionLabel,
+                 xloc = xloc.bar_index, style = label.style_label_left,
+                 color = color.new(directionColor, 85),
+                 textcolor = directionColor, size = size.small)
         else
             line.set_xy1(funnelTop, leftBar, h48)
             line.set_xy2(funnelTop, rightBar, apex)
@@ -268,6 +306,14 @@ if barstate.islast
             line.set_xy2(funnelBottom, rightBar, apex)
             line.set_xy1(funnelBase, leftBar, h48)
             line.set_xy2(funnelBase, leftBar, l48)
+            line.set_xy1(funnelAxis, leftBar, mid48)
+            line.set_xy2(funnelAxis, rightBar, apex)
+            line.set_color(funnelAxis, edgeCol)
+            label.set_x(funnelLabel, rightBar)
+            label.set_y(funnelLabel, apex)
+            label.set_text(funnelLabel, directionLabel)
+            label.set_color(funnelLabel, color.new(directionColor, 85))
+            label.set_textcolor(funnelLabel, directionColor)
             line.set_color(funnelTop, edgeCol)
             line.set_color(funnelBottom, edgeCol)
             line.set_color(funnelBase, edgeCol)
@@ -277,9 +323,13 @@ if barstate.islast
             line.delete(funnelTop)
             line.delete(funnelBottom)
             line.delete(funnelBase)
+            line.delete(funnelAxis)
+            label.delete(funnelLabel)
             funnelTop := na
             funnelBottom := na
             funnelBase := na
+            funnelAxis := na
+            funnelLabel := na
             funnelFill := na
 
 plotshape(enterLong, title = "ورود لانگ", style = shape.triangleup,
@@ -287,15 +337,17 @@ plotshape(enterLong, title = "ورود لانگ", style = shape.triangleup,
 plotshape(enterShort, title = "ورود شورت", style = shape.triangledown,
      location = location.abovebar, color = color.red, size = size.tiny)
 
-var table dashboard = table.new(position.top_right, 2, 7, border_width = 1)
+var table dashboard = table.new(position.top_right, 2, 8, border_width = 1)
 string dText = dailyBull ? "صعودی" : dailyBear ? "نزولی" : "خنثی"
 string wText = weeklyBull ? "صعودی" : weeklyBear ? "نزولی" : "خنثی"
 string modeText = not is1m ? "چارت ۱ دقیقه لازم" :
      not validQuote ? "نماد نامعتبر" :
      longAllowed ? "لانگ" : shortAllowed ? "شورت" : "توقف معامله"
 string lineText = not requireLineClose ? "شرط خاموش" :
-     not (use3h or use6h or use9h or use12h or use24h or use48h) ? "هیچ بازه فعال نیست" :
+     not (use1h or use3h or use6h or use9h or use12h or use24h or use48h) ? "هیچ بازه فعال نیست" :
      hitAnyLevel ? "کلوز نزدیک سطح" : "کلوز دور از سطح"
+string triangleText = not triangleReady ? "داده ناکافی" :
+     triangleBull ? "صعودی" : triangleBear ? "نزولی" : "خنثی"
 string posText = strategy.position_size > 0 ? "لانگ باز" :
      strategy.position_size < 0 ? "شورت باز" : "بدون پوزیشن"
 string qtyText = longAllowed ? str.tostring(longQty) :
@@ -317,5 +369,11 @@ if barstate.islast
         table.cell(dashboard, 0, 6, "TP / SL", bgcolor = color.black, text_color = color.white)
         table.cell(dashboard, 1, 6, str.tostring(tpPct) + "% / " + str.tostring(slPct) + "%",
              bgcolor = color.black, text_color = color.white)
+        table.cell(dashboard, 0, 7, "جهت مثلث ۲۴/۴۸", bgcolor = color.black, text_color = color.white)
+        table.cell(dashboard, 1, 7, triangleText +
+             (useTriangleDirection ? " | فیلتر روشن" : " | فیلتر خاموش"),
+             bgcolor = not triangleReady ? color.gray :
+             triangleBull ? color.green : triangleBear ? color.red : color.gray,
+             text_color = color.white)
     else
-        table.clear(dashboard, 0, 0, 1, 6)
+        table.clear(dashboard, 0, 0, 1, 7)
